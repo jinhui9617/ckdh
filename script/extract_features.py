@@ -8,12 +8,14 @@
 import argparse
 import glob
 import os
+from time import *
 
 import cv2
 import numpy as np
 import torch
 from PIL import Image
 
+import torchvision
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.layers import nms
 from maskrcnn_benchmark.modeling.detector import build_detection_model
@@ -39,7 +41,7 @@ class FeatureExtractor:
         parser.add_argument(
             "--config_file", default=None, type=str, help="Detectron config file"
         )
-        parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
+        parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
         parser.add_argument(
             "--num_features",
             type=int,
@@ -70,17 +72,18 @@ class FeatureExtractor:
         parser.add_argument(
             "--partition", type=int, default=0, help="Partition to download."
         )
+        parser.add_argument(
+            "--list_dir", default=None, type=str, help="List file"
+        )
+
         return parser
 
     def _build_detection_model(self):
         cfg.merge_from_file(self.args.config_file)
         cfg.freeze()
-
         model = build_detection_model(cfg)
         checkpoint = torch.load(self.args.model_file, map_location=torch.device("cpu"))
-
         load_state_dict(model, checkpoint.pop("model"))
-
         model.to("cuda")
         model.eval()
         return model
@@ -175,6 +178,7 @@ class FeatureExtractor:
         img_tensor, im_scales, im_infos = [], [], []
 
         for image_path in image_paths:
+            # print("extract:" + image_path)
             im, im_scale, im_info = self._image_transform(image_path)
             img_tensor.append(im)
             im_scales.append(im_scale)
@@ -209,7 +213,9 @@ class FeatureExtractor:
         info["features"] = feature.cpu().numpy()
         file_base_name = file_base_name + ".npy"
 
+        print("save:" + file_base_name)
         np.save(os.path.join(self.args.output_folder, file_base_name), info)
+
 
     def extract_features(self):
         image_dir = self.args.image_dir
@@ -226,9 +232,36 @@ class FeatureExtractor:
                     for idx, file_name in enumerate(chunk):
                         self._save_feature(file_name, features[idx], infos[idx])
                 except BaseException:
+                    print("error")
                     continue
+
+    def extract_features2(self):
+        image_dir = self.args.image_dir
+        list_dir = self.args.list_dir
+        print('start')
+        with open(list_dir, 'r') as f:
+            files = []
+            for img in f:
+                file_path = image_dir + "/" + img[0:-1]
+                files.append(file_path)
+                print(file_path)
+        print('get list!')
+        for chunk in self._chunks(files, self.args.batch_size):
+            try:
+                features, infos = self.get_detectron_features(chunk)
+                for idx, file_name in enumerate(chunk):
+                    self._save_feature(file_name, features[idx], infos[idx])
+            except BaseException:
+                print("error")
+                continue
 
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
-    feature_extractor.extract_features()
+    begin_time = time()
+    # feature_extractor.extract_features()
+    feature_extractor.extract_features2()
+
+    end_time = time()
+    run_time = end_time - begin_time
+    print('run_time:', run_time)

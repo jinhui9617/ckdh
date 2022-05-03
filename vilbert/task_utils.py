@@ -3,22 +3,16 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from io import open
-import json
 import logging
-import os
-import sys
 
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.tokenization_bert import BertTokenizer
-from vilbert.datasets import DatasetMapTrain, DatasetMapEval
-from vilbert.datasets._image_features_reader import ImageFeaturesH5Reader
-import pdb
+from wode import DatasetMapTrain, DatasetMapEval
+from wode import ImageFeaturesH5Reader
 
 logger = logging.getLogger(__name__)
 

@@ -182,6 +182,12 @@ class BertConfig(object):
         model="bert",
         task_specific_tokens=False,
         visualization=False,
+        code_length=16,
+        num_label=38,
+        batch_size=128,
+        max_seq_length=20,
+        max_region_num=50,
+        h_hidden_size = 64,
     ):
 
         """Constructs BertConfig.
@@ -260,6 +266,12 @@ class BertConfig(object):
             self.num_negative = num_negative
             self.task_specific_tokens = task_specific_tokens
             self.visualization = visualization
+            self.code_length = code_length
+            self.num_label = num_label
+            self.batch_size = batch_size
+            self.max_seq_length = max_seq_length
+            self.max_region_num = max_region_num
+            self.h_hidden_size = h_hidden_size
         else:
             raise ValueError(
                 "First argument must be either a vocabulary size (int)"
@@ -294,27 +306,27 @@ class BertConfig(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-try:
-    from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
-except ImportError:
-    logger.info(
-        "Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex ."
-    )
+# try:
+#     from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
+# except ImportError:
+#     logger.info(
+#         "Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex ."
+#     )
 
-    class BertLayerNorm(nn.Module):
-        def __init__(self, hidden_size, eps=1e-12):
-            """Construct a layernorm module in the TF style (epsilon inside the square root).
-            """
-            super(BertLayerNorm, self).__init__()
-            self.weight = nn.Parameter(torch.ones(hidden_size))
-            self.bias = nn.Parameter(torch.zeros(hidden_size))
-            self.variance_epsilon = eps
+class BertLayerNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-12):
+        """Construct a layernorm module in the TF style (epsilon inside the square root).
+        """
+        super(BertLayerNorm, self).__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.bias = nn.Parameter(torch.zeros(hidden_size))
+        self.variance_epsilon = eps
 
-        def forward(self, x):
-            u = x.mean(-1, keepdim=True)
-            s = (x - u).pow(2).mean(-1, keepdim=True)
-            x = (x - u) / torch.sqrt(s + self.variance_epsilon)
-            return self.weight * x + self.bias
+    def forward(self, x):
+        u = x.mean(-1, keepdim=True)
+        s = (x - u).pow(2).mean(-1, keepdim=True)
+        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
+        return self.weight * x + self.bias
 
 
 class BertEmbeddings(nn.Module):
@@ -345,8 +357,12 @@ class BertEmbeddings(nn.Module):
 
     def forward(self, input_ids, token_type_ids=None, task_ids=None, position_ids=None):
 
+        # seq_length = len(input_ids)
         seq_length = input_ids.size(1)
-        position_ids = torch.arange(
+        # position_ids = torch.arange(
+        #     seq_length, dtype=torch.long, device=input_ids.device
+        # )
+        position_ids = torch.zeros(
             seq_length, dtype=torch.long, device=input_ids.device
         )
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
@@ -973,6 +989,8 @@ class BertEncoder(nn.Module):
                     t_start = self.fixed_t_layer
                     if output_all_attention_masks:
                         all_attention_mask_t.append(txt_attention_probs)
+                    if output_all_encoded_layers:
+                        all_encoder_layers_t.append(txt_embedding)
 
             for idx in range(t_start, t_end):
                 txt_embedding, txt_attention_probs = self.layer[idx](
@@ -980,6 +998,8 @@ class BertEncoder(nn.Module):
                 )
                 if output_all_attention_masks:
                     all_attention_mask_t.append(txt_attention_probs)
+                if output_all_encoded_layers:
+                    all_encoder_layers_t.append(txt_embedding)
 
             for idx in range(v_start, self.fixed_v_layer):
                 with torch.no_grad():
@@ -993,6 +1013,8 @@ class BertEncoder(nn.Module):
 
                     if output_all_attention_masks:
                         all_attnetion_mask_v.append(image_attention_probs)
+                    if output_all_encoded_layers:
+                        all_encoder_layers_v.append(image_embedding)
 
             for idx in range(v_start, v_end):
                 image_embedding, image_attention_probs = self.v_layer[idx](
@@ -1004,53 +1026,55 @@ class BertEncoder(nn.Module):
 
                 if output_all_attention_masks:
                     all_attnetion_mask_v.append(image_attention_probs)
+                if output_all_encoded_layers:
+                    all_encoder_layers_v.append(image_embedding)
 
-            if count == 0 and self.in_batch_pairs:
-                # new batch size is the batch_size ^2
-                image_embedding = (
-                    image_embedding.unsqueeze(0)
-                    .expand(batch_size, batch_size, num_regions, v_hidden_size)
-                    .contiguous()
-                    .view(batch_size * batch_size, num_regions, v_hidden_size)
-                )
-                image_attention_mask = (
-                    image_attention_mask.unsqueeze(0)
-                    .expand(batch_size, batch_size, 1, 1, num_regions)
-                    .contiguous()
-                    .view(batch_size * batch_size, 1, 1, num_regions)
-                )
-
-                txt_embedding = (
-                    txt_embedding.unsqueeze(1)
-                    .expand(batch_size, batch_size, num_words, t_hidden_size)
-                    .contiguous()
-                    .view(batch_size * batch_size, num_words, t_hidden_size)
-                )
-                txt_attention_mask = (
-                    txt_attention_mask.unsqueeze(1)
-                    .expand(batch_size, batch_size, 1, 1, num_words)
-                    .contiguous()
-                    .view(batch_size * batch_size, 1, 1, num_words)
-                )
-                co_attention_mask = (
-                    co_attention_mask.unsqueeze(1)
-                    .expand(batch_size, batch_size, 1, num_regions, num_words)
-                    .contiguous()
-                    .view(batch_size * batch_size, 1, num_regions, num_words)
-                )
-
-            if count == 0 and self.FAST_MODE:
-                txt_embedding = txt_embedding.expand(
-                    image_embedding.size(0),
-                    txt_embedding.size(1),
-                    txt_embedding.size(2),
-                )
-                txt_attention_mask = txt_attention_mask.expand(
-                    image_embedding.size(0),
-                    txt_attention_mask.size(1),
-                    txt_attention_mask.size(2),
-                    txt_attention_mask.size(3),
-                )
+            # if count == 0 and self.in_batch_pairs:
+            #     # new batch size is the batch_size ^2
+            #     image_embedding = (
+            #         image_embedding.unsqueeze(0)
+            #         .expand(batch_size, batch_size, num_regions, v_hidden_size)
+            #         .contiguous()
+            #         .view(batch_size * batch_size, num_regions, v_hidden_size)
+            #     )
+            #     image_attention_mask = (
+            #         image_attention_mask.unsqueeze(0)
+            #         .expand(batch_size, batch_size, 1, 1, num_regions)
+            #         .contiguous()
+            #         .view(batch_size * batch_size, 1, 1, num_regions)
+            #     )
+            #
+            #     txt_embedding = (
+            #         txt_embedding.unsqueeze(1)
+            #         .expand(batch_size, batch_size, num_words, t_hidden_size)
+            #         .contiguous()
+            #         .view(batch_size * batch_size, num_words, t_hidden_size)
+            #     )
+            #     txt_attention_mask = (
+            #         txt_attention_mask.unsqueeze(1)
+            #         .expand(batch_size, batch_size, 1, 1, num_words)
+            #         .contiguous()
+            #         .view(batch_size * batch_size, 1, 1, num_words)
+            #     )
+            #     co_attention_mask = (
+            #         co_attention_mask.unsqueeze(1)
+            #         .expand(batch_size, batch_size, 1, num_regions, num_words)
+            #         .contiguous()
+            #         .view(batch_size * batch_size, 1, num_regions, num_words)
+            #     )
+            #
+            # if count == 0 and self.FAST_MODE:
+            #     txt_embedding = txt_embedding.expand(
+            #         image_embedding.size(0),
+            #         txt_embedding.size(1),
+            #         txt_embedding.size(2),
+            #     )
+            #     txt_attention_mask = txt_attention_mask.expand(
+            #         image_embedding.size(0),
+            #         txt_attention_mask.size(1),
+            #         txt_attention_mask.size(2),
+            #         txt_attention_mask.size(3),
+            #     )
 
             if self.with_coattention:
                 # do the bi attention.
@@ -1096,9 +1120,9 @@ class BertEncoder(nn.Module):
                 all_attention_mask_t.append(txt_attention_probs)
 
         # add the end part to finish.
-        if not output_all_encoded_layers:
-            all_encoder_layers_t.append(txt_embedding)
-            all_encoder_layers_v.append(image_embedding)
+        # if not output_all_encoded_layers:
+        all_encoder_layers_t.append(txt_embedding)
+        all_encoder_layers_v.append(image_embedding)
 
         return (
             all_encoder_layers_t,
@@ -1316,7 +1340,7 @@ class BertModel(BertPreTrainedModel):
         image_attention_mask=None,
         co_attention_mask=None,
         task_ids=None,
-        output_all_encoded_layers=False,
+        output_all_encoded_layers=True,
         output_all_attention_masks=False,
     ):
         if attention_mask is None:
@@ -1341,7 +1365,7 @@ class BertModel(BertPreTrainedModel):
         extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
         extended_image_attention_mask = image_attention_mask.unsqueeze(1).unsqueeze(2)
 
-        extended_attention_mask2 = attention_mask.unsqueeze(2)
+        # extended_attention_mask2 = attention_mask.unsqueeze(2)
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
         # positions we want to attend and -10000.0 for masked positions.
@@ -1352,27 +1376,30 @@ class BertModel(BertPreTrainedModel):
         )  # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        extended_attention_mask2 = extended_attention_mask2.to(
-            dtype=next(self.parameters()).dtype
-        )  # fp16 compatibility
+        # extended_attention_mask2 = extended_attention_mask2.to(
+        #     dtype=next(self.parameters()).dtype
+        # )  # fp16 compatibility
+        extended_attention_mask2 = None
+
 
         extended_image_attention_mask = extended_image_attention_mask.to(
             dtype=next(self.parameters()).dtype
         )  # fp16 compatibility
         extended_image_attention_mask = (1.0 - extended_image_attention_mask) * -10000.0
 
-        if co_attention_mask is None:
-            co_attention_mask = torch.zeros(
-                input_txt.size(0), input_imgs.size(1), input_txt.size(1)
-            ).type_as(extended_image_attention_mask)
-
-        extended_co_attention_mask = co_attention_mask.unsqueeze(1)
+        # if co_attention_mask is None:
+        #     co_attention_mask = torch.zeros(
+        #         input_txt.size(0), input_imgs.size(1), input_txt.size(1)
+        #     ).type_as(extended_image_attention_mask)
+        #
+        # extended_co_attention_mask = co_attention_mask.unsqueeze(1)
 
         # extended_co_attention_mask = co_attention_mask.unsqueeze(-1)
-        extended_co_attention_mask = extended_co_attention_mask * 5.0
-        extended_co_attention_mask = extended_co_attention_mask.to(
-            dtype=next(self.parameters()).dtype
-        )  # fp16 compatibility
+        # extended_co_attention_mask = extended_co_attention_mask * 5.0
+        # extended_co_attention_mask = extended_co_attention_mask.to(
+        #     dtype=next(self.parameters()).dtype
+        # )  # fp16 compatibility
+        extended_co_attention_mask = None
 
         embedding_output = self.embeddings(input_txt, token_type_ids, task_ids)
         v_embedding_output = self.v_embeddings(input_imgs, image_loc)
