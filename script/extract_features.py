@@ -235,32 +235,11 @@ class FeatureExtractor:
                     print("error")
                     continue
 
-    def extract_features2(self):
-        image_dir = self.args.image_dir
-        list_dir = self.args.list_dir
-        print('start')
-        with open(list_dir, 'r') as f:
-            files = []
-            for img in f:
-                file_path = image_dir + "/" + img[0:-1]
-                files.append(file_path)
-                print(file_path)
-        print('get list!')
-        for chunk in self._chunks(files, self.args.batch_size):
-            try:
-                features, infos = self.get_detectron_features(chunk)
-                for idx, file_name in enumerate(chunk):
-                    self._save_feature(file_name, features[idx], infos[idx])
-            except BaseException:
-                print("error")
-                continue
-
 
 if __name__ == "__main__":
     feature_extractor = FeatureExtractor()
     begin_time = time()
-    # feature_extractor.extract_features()
-    feature_extractor.extract_features2()
+    feature_extractor.extract_features()
 
     end_time = time()
     run_time = end_time - begin_time
