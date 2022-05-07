@@ -11,7 +11,7 @@ please read the README.md of ViLBERT for more information.
 * For the method of extracting picture features, please refer to [ViLBERT](https://github.com/facebookresearch/vilbert-multi-task)'s Data Setup.
 
 ## Train
-* Finetune the network with the cross-entropy loss for classification to accelerate training convergence.<br>
+* Finetune the network with the cross-entropy loss for classification to accelerate training convergence. Such as:<br>
 ```
 python pre_teacher_main.py --from_pretrained <pretrained_model_path>
 ```
