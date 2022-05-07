@@ -147,7 +147,7 @@ def main():
                         help='file of testing set')
     parser.add_argument('--cap_train',
                         default='./data/mir_train_cap.txt',
-                        help='tag file of training set')
+                        help='caption file of training set')
     parser.add_argument('--tag_train',
                         default='./data/mir_train_tag.txt',
                         help='tag file of training set')

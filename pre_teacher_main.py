@@ -172,13 +172,13 @@ def main():
                         help='file of testing set')
     parser.add_argument('--cap_train',
                         default='./data/mir_train_cap.txt',
-                        help='tag file of training set')
+                        help='caption file of training set')
     parser.add_argument('--cap_test',
                         default='./data/mir_test_cap.txt',
-                        help='tag file of testing set')
+                        help='caption file of testing set')
     parser.add_argument('--cap_database',
                         default='./data/mir_database_cap.txt',
-                        help='tag file of database set')
+                        help='caption file of database set')
     parser.add_argument("--output_dir",
                         default="./save/teacher/mir/pretrain/",
                         type=str,
